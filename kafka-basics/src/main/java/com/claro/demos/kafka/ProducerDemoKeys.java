@@ -27,7 +27,7 @@ public class ProducerDemoKeys {
 
 
         // send data - asynchronous
-        for (int i = 1; i <= 10; i++) {
+        for (int i = 1; i <= 20; i++) {
             String topic = "demo_java";
             String value = String.format("Hello I am a message %d from kafka producer with keys", i);
             String key = String.format("id_%d", i);
