@@ -29,11 +29,11 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.Properties;
 
-public class OpenSearchConsumer {
+public class OpenSearchConsumerManualCommit {
 
     public static void main(String[] args) {
 
-        Logger logger = LoggerFactory.getLogger(OpenSearchConsumer.class.getName());
+        Logger logger = LoggerFactory.getLogger(OpenSearchConsumerManualCommit.class.getName());
 
         // Creating an OpenSearch Client
         RestHighLevelClient openSearchClient = createOpenSearchClient();
@@ -78,14 +78,19 @@ public class OpenSearchConsumer {
                                 .id(id);
 
                         IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
-                        logger.info(response.getId());
-                    } catch (IOException e) {
+                        //logger.info(response.getId());
+                    } catch (Exception e) {
+                        logger.error("Error while inserting data to opensearch...");
 
                     }
                 }
+                // commit offsets after the batch is consumed
+                consumer.commitSync();
+                logger.info("Offsets has been committed");
+
             }
         } catch (Exception e) {
-            logger.error(e.getMessage());
+            logger.error("error : opensearch " + e.getMessage());
         }
 
 
@@ -112,6 +117,9 @@ public class OpenSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+
+        // Manual commit
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties);
 
         return consumer;

@@ -12,6 +12,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
 import org.opensearch.client.RequestOptions;
@@ -29,66 +31,81 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.Properties;
 
-public class OpenSearchConsumer {
+public class OpenSearchConsumerManualCommitBulkRequest {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
 
-        Logger logger = LoggerFactory.getLogger(OpenSearchConsumer.class.getName());
+        Logger log = LoggerFactory.getLogger(OpenSearchConsumer.class.getSimpleName());
 
-        // Creating an OpenSearch Client
+        // first create an OpenSearch Client
         RestHighLevelClient openSearchClient = createOpenSearchClient();
 
-
-        // Create a Kafka Client
+        // create our Kafka Client
         KafkaConsumer<String, String> consumer = createKafkaConsumer();
 
+        // we need to create the index on OpenSearch if it doesn't exist already
 
-        // create the index on OpenSearch if it doesn't exist already
-        try (openSearchClient; consumer) {
+        try(openSearchClient; consumer){
+
             boolean indexExists = openSearchClient.indices().exists(new GetIndexRequest("wikimedia"), RequestOptions.DEFAULT);
-
-            if (!indexExists) {
+            if (!indexExists){
                 CreateIndexRequest createIndexRequest = new CreateIndexRequest("wikimedia");
                 openSearchClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
-                logger.info("The Wikimedia Index has been created!");
+                log.info("The Wikimedia Index has been created!");
             } else {
-                logger.info("The Wikimedia Index already exits");
+                log.info("The Wikimedia Index already exits");
             }
-
-            // subscribe to the consumner
+            // we subscribe the consumer
             consumer.subscribe(Collections.singleton("wikimedia.recentchange"));
 
-            while (true) {
+
+            while(true) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(3000));
-                int recordsCont = records.count();
-                logger.info(String.format("received %d records", recordsCont));
+                int recordCount = records.count();
+                log.info("Received " + recordCount + " record(s)");
+                BulkRequest bulkRequest = new BulkRequest();
 
                 for (ConsumerRecord<String, String> record : records) {
-                    // send the record to OpenSearch
-
-                    // Strategy 1: Define an ID using Kafka Record Coordinates
-                    // String id = String.format("%s_%s_%s", record.topic(), record.partition(), record.offset());
-
+                    // send the record into OpenSearch
+                    // strategy 1
+                    // define an ID using Kafka Record coordinates
+//                    String id = record.topic() + "_" + record.partition() + "_" + record.offset();
                     try {
-                        // Strategy 2: Extract id form JSON value
+                        // strategy 2
+                        // we extract the ID from the JSON value
                         String id = extractId(record.value());
 
                         IndexRequest indexRequest = new IndexRequest("wikimedia")
                                 .source(record.value(), XContentType.JSON)
                                 .id(id);
 
-                        IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
-                        logger.info(response.getId());
-                    } catch (IOException e) {
+//                        IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
+                        bulkRequest.add(indexRequest);
+//                        log.info(response.getId());
+                    } catch (Exception e){
 
                     }
                 }
+                if (bulkRequest.numberOfActions() > 0){
+                    BulkResponse bulkResponse = openSearchClient.bulk(bulkRequest, RequestOptions.DEFAULT);
+                    log.info("Inserted " + bulkResponse.getItems().length + " record(s).");
+
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    // commit offsets after the batch is consumed
+                    consumer.commitSync();
+                    log.info("Offsets have been committed!");
+                }
             }
-        } catch (Exception e) {
-            logger.error(e.getMessage());
         }
 
+        // main code logic
 
+        // close things
     }
 
     private static String extractId(String json) {
@@ -112,6 +129,9 @@ public class OpenSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+
+        // Manual commit
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties);
 
         return consumer;
